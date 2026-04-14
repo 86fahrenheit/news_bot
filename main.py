@@ -62,7 +62,7 @@ def fetch_news_text() -> str:
         try:
             print(f"Gemini試行 {i+1}回目...")
             res = client.models.generate_content(
-                model="gemini-3-flash-preview",
+                model="gemini-3.1-flash-lite-preview",
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     tools=[types.Tool(google_search=types.GoogleSearch())],
