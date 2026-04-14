@@ -1,7 +1,6 @@
 import os
 import time
 from datetime import datetime, timezone
-from urllib.parse import urlparse, urlunparse
 import requests
 from google import genai
 from google.genai import types
@@ -43,8 +42,6 @@ URL: https://...
 
 制約:
 - URLは必ず https:// から始まる実在のURLにしてください
-- URLはトップページではなく、そのニュース本文のページを直接指すURLにしてください
-- URLに `...` やプレースホルダ、推測しただけのURLを含めないでください
 - URLが確認できないニュースは出力しないでください
 - 要約は2〜3文で、少し詳しめに書いてください
 - 日本語で簡潔に書いてください
@@ -57,64 +54,6 @@ URL: https://...
 - これらが候補に含まれる場合は除外し、別のニュースに置き換えてください
 - これらの禁止事項に違反する出力は無効とします
 """
-
-REQUEST_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-    )
-}
-
-
-def normalize_url(url: str) -> str | None:
-    trimmed = url.strip().strip("<>()[]{}.,\"'")
-    if " " in trimmed or "..." in trimmed:
-        return None
-
-    parsed = urlparse(trimmed)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        return None
-
-    return urlunparse(parsed._replace(fragment=""))
-
-
-def verify_url(url: str) -> str | None:
-    try:
-        response = requests.head(
-            url,
-            allow_redirects=True,
-            timeout=10,
-            headers=REQUEST_HEADERS,
-        )
-        if response.status_code >= 400 or not response.url:
-            raise requests.HTTPError(f"HEAD status={response.status_code}")
-    except Exception:
-        try:
-            response = requests.get(
-                url,
-                allow_redirects=True,
-                timeout=10,
-                headers=REQUEST_HEADERS,
-                stream=True,
-            )
-            if response.status_code >= 400 or not response.url:
-                return None
-        except Exception:
-            return None
-
-    content_type = response.headers.get("Content-Type", "").lower()
-    if content_type and "text/html" not in content_type and "application/pdf" not in content_type:
-        return None
-
-    resolved_url = normalize_url(response.url)
-    if not resolved_url:
-        return None
-
-    path = urlparse(resolved_url).path.rstrip("/")
-    if path in {"", "/"}:
-        return None
-
-    return resolved_url
 
 def fetch_news_text() -> str:
     text = None
@@ -200,9 +139,8 @@ def parse_news(raw_text: str) -> dict:
 
         elif line.startswith("URL:"):
             url = line.replace("URL:", "", 1).strip()
-            normalized_url = normalize_url(url)
-            if normalized_url:
-                current_item["url"] = normalized_url
+            if url.startswith("http://") or url.startswith("https://"):
+                current_item["url"] = url
 
         else:
             # 要約の続きらしき行は要約に連結
@@ -218,40 +156,6 @@ def parse_news(raw_text: str) -> dict:
         categories[current_category].append(current_item)
 
     return categories
-
-
-def validate_news_urls(news: dict) -> dict:
-    validated_news = {}
-    seen_urls = set()
-
-    for category, items in news.items():
-        validated_items = []
-
-        for item in items:
-            url = item.get("url")
-            if not url:
-                continue
-
-            verified_url = verify_url(url)
-            if not verified_url:
-                print(f"無効なURLを除外: {url}")
-                continue
-
-            if verified_url in seen_urls:
-                print(f"重複URLを除外: {verified_url}")
-                continue
-
-            updated_item = item.copy()
-            updated_item["url"] = verified_url
-            validated_items.append(updated_item)
-            seen_urls.add(verified_url)
-
-            if len(validated_items) == 3:
-                break
-
-        validated_news[category] = validated_items
-
-    return validated_news
 
 
 def build_embed_description(items: list[dict]) -> str:
@@ -332,7 +236,6 @@ def send_to_discord(embeds: list[dict]) -> None:
 def main() -> None:
     raw_text = fetch_news_text()
     news = parse_news(raw_text)
-    news = validate_news_urls(news)
     embeds = build_embeds(news)
     send_to_discord(embeds)
 
